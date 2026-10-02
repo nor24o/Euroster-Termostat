@@ -1,24 +1,25 @@
-# Euroster 2006 TX Wi-Fi Gateway & RF Sniffer (ESP32-C3)
+# Euroster 2006 TX Wi-Fi Gateway & RF Controller (ESP32-C3)
 
-Gateway inteligent Wi-Fi și analizor logic OOK la 433.92 MHz bazat pe **ESP32-C3** pentru emularea și clonarea termostatelor ambientale **Euroster 2006 TX** (fără a modifica receptorul de pe cazan / centrală).
+Gateway inteligent Wi-Fi și transmițător OOK la 433.92 MHz bazat pe **ESP32-C3** pentru emularea și controlul complet al receptoarelor de cazan / centrală **Euroster 2006 RX** (fără a modifica receptorul sau instalația de încălzire).
 
-Permite controlul centralei termice prin interfață web responsivă (Dark Mode), integrare în Home Assistant prin REST API și sniffing de pachete în timp real direct de pe pinul de transmisie al termostatului original.
+Include stocare persistentă în Flash (NVS), interfață web responsivă (Dark Mode), integrare Home Assistant prin REST API și un **Scanner Automat (Brute-Force)** capabil să deducă și să găsească codul oricărui receptor Euroster în câteva minute chiar dacă nu ai termostatul original.
 
 ---
 
 ## 🌟 Caracteristici
 
-* **Emulare 100% Identică a Termostatului**: Controlează direct receptorul Euroster fără a modifica centrala.
-* **Analizor Logic & Sniffer Live (Pin 5)**: Intrare High-Z (>10 MΩ) pe GPIO 5 pentru citirea impulsurilor direct din PIC-ul termostatului original fără detunarea oscilatorului RF.
-* **Auto-calibrare Timpi Radio**: Măsoară automat viteza ceasului termostatului tău (~1064 µs pentru Bit 0 și ~2085 µs pentru Bit 1).
+* **Emulare 100% Identică a Termostatului**: Emite cadrele pe 22 de biți pe care le așteaptă receptorul Euroster 2006.
+* **Memorie Persistentă Flash (NVS)**: Salvează House Code-ul în memoria non-volatilă a ESP32, rezistând la reporniri sau căderi de tensiune.
+* **Scanner Automat House Code (Brute-force 12 biți)**:
+  * Parcurge automat toate cele 4096 de coduri posibile (`0x000` – `0xFFF`) la viteză mare (~5.5 coduri/secundă).
+  * Oprești scanarea când auzi releul centralei comutând și testezi codurile recente pentru a salva codul definitiv.
+* **Reglaj Fin și Testare Pas cu Pas**: Butoane de `-1`, `+1` și testare instantă direct din Web UI.
 * **Interfață Web Integrată (Dark Mode)**:
-  * Control ON / OFF / Keepalive manual.
-  * Istoric al ultimelor 10 pachete capturate.
-  * Analizor detaliat al duratelor fiecărui bit (HIGH, LOW, Perioadă).
-  * Retransmitere (Replay) și tester RF manual cu număr configurabil de repetiții.
+  * Control manual ON / OFF / Keepalive.
+  * Configurare și afișare cod activ în formatele Hex (`0xE60`), Zecimal (`3680`) și Binar (`111001100000`).
 * **Keepalive Automat**: Transmisie periodică la fiecare 45 de secunde pentru a preveni decuplarea de siguranță a receptorului Euroster (~7 minute).
 * **Protecție Anti-Jitter Wi-Fi**: Secțiuni critice hardware pentru precizie la nivel de microsecundă în generarea impulsurilor OOK.
-* **Compatibil Home Assistant**: Controlabil complet prin REST API (`/api/on`, `/api/off`, `/api/status`).
+* **Compatibil Home Assistant**: Controlabil complet prin REST API (`/api/on`, `/api/off`, `/api/status`, `/api/set_house_code`).
 
 ---
 
@@ -42,7 +43,7 @@ Protocolul utilizează modulație OOK (On-Off Keying) pe 433.92 MHz:
        (0xE60)             (HEAT ON)      (Checksum)       (Stop)
 ```
 
-* **Adresă / House Code (12 biți)**: Identificator unic al perechii termostat-receptor (ex: `111001100000` / `0xE60`).
+* **Adresă / House Code (12 biți)**: Identificator unic al perechii termostat-receptor (ex: `111001100000` / `0xE60` / `3680`).
 * **Comandă (4 biți)**:
   * `0001` (sau `1000`) = **HEAT ON** (Pornește încălzirea / anclanșează releul)
   * `0100` = **HEAT OFF** (Oprește încălzirea / declanșează releul)
@@ -56,13 +57,25 @@ Protocolul utilizează modulație OOK (On-Off Keying) pe 433.92 MHz:
 | Pin ESP32-C3 | GPIO | Funcție | Conexiune Hardware |
 | :--- | :--- | :--- | :--- |
 | **D1** | GPIO 3 | Ieșire RF TX | Pinul DATA al modulului emițător 433.92 MHz (FS1000A) |
-| **D3** | GPIO 5 | Intrare Sniffer | Fir conectat la pinul DATA/TX al termostatului (printr-o rezistență serie de 1kΩ–10kΩ) |
 | **5V / VBUS** | - | Alimentare | 5V alimentare emițător RF |
-| **GND** | - | Masă Comună | GND ESP32 legat la GND modul RF și la **GND-ul bateriilor termostatului** |
+| **GND** | - | Masă Comună | GND ESP32 legat la GND-ul modulului RF |
 
-> [!TIP]
-> **De ce este recomandată o rezistență serie de 1kΩ–10kΩ pe pinul de sniffer?**  
-> La frecvența de comutație digitală (~1 kHz), rezistența nu modifică timpii impulsurilor. În schimb, la frecvența RF de 433.92 MHz, rezistența izolează capacitatea parazită a firului, prevenind dezacordarea oscilatorului SAW/tranzistor din termostat.
+---
+
+## 🔍 Cum găsești House Code-ul dacă nu ai termostatul original
+
+Există 3 moduri de a stabili comunicarea cu receptorul Euroster de la cazan:
+
+1. **Scanner Automat Brute-Force (din Web UI)**:
+   * Deschide interfața la `http://euroster.local/`.
+   * În secțiunea **Scanner Automat**, apasă **`▶️ Pornește Scanare Automată`**.
+   * ESP32 va parcurge pe rând cele 4096 de coduri trimițând impulsuri de pornire.
+   * Când auzi releul centralei comutând (sau vezi LED-ul verde aprins pe receptor), apasă **`🛑 AM AUZIT RELEUL! (STOP)`**.
+   * Interfața îți afișează ultimele coduri testate; apeși pe ele pentru a confirma exact codul și apoi **`💾 Salvează în Flash`**.
+2. **Citirea etichetei de pe receptor**:
+   * Pe spatele receptorului RX (sau lângă conectori) există o etichetă cu numărul de serie / codul de fabrică corespunzător celor 12 biți.
+3. **Modul de învățare (Pairing) al receptorului**:
+   * Dacă receptorul Euroster are buton de pairing (adesea marcat cu **E**), apăsarea lui de 3 ori activează modul de învățare (LED albastru). Emite orice cod din ESP32, iar receptorul se va împerechea cu el.
 
 ---
 
@@ -71,13 +84,15 @@ Protocolul utilizează modulație OOK (On-Off Keying) pe 433.92 MHz:
 | Metodă | Endpoint | Descriere |
 | :--- | :--- | :--- |
 | `GET` | `/` | Interfața Web Dark Mode responsivă |
-| `GET` | `/api/status` | Returnează starea curentă, datele sniffer, uptime, RSSI |
-| `GET` | `/api/history` | Returnează istoricul JSON al pachetelor capturate și duratele fiecărui puls |
+| `GET` | `/api/status` | Starea curentă a centralei, House Code activ, RSSI, Uptime |
 | `POST` | `/api/on` | Transmite comanda HEAT ON către centrală |
 | `POST` | `/api/off` | Transmite comanda HEAT OFF către centrală |
 | `POST` | `/api/sync` | Trimite un puls manual de sincronizare (keepalive) |
-| `POST` | `/api/replay?bits=...` | Retransmite un șir arbitrar de biți pe 433.92 MHz |
-| `POST` | `/api/clear_history` | Golește istoricul de pachete capturate |
+| `POST` | `/api/set_house_code?code=0xE60` | Salvează un nou House Code în memoria NVS Flash |
+| `POST` | `/api/test_code?code=0xE60&action=on` | Trimite un puls de test cu un cod specificat |
+| `POST` | `/api/scan_start` | Pornește scanarea automată brute-force |
+| `POST` | `/api/scan_stop` | Oprește scanarea și returnează ultimele coduri parcurse |
+| `GET` | `/api/scan_status` | Returnează progresul curent al scanerului |
 
 ---
 
@@ -116,8 +131,6 @@ sensor:
 ---
 
 ## 🛠️ Compilare și Flash (PlatformIO)
-
-Proiectul este configurat pe **Arduino Core 3.1.1 / ESP-IDF 5.3** (`pioarduino`) pentru a elimina complet bug-ul `WIFI_REASON_AUTH_EXPIRE` specific ESP32-C3 pe routere WPA2/WPA3.
 
 1. Clonează repository-ul:
    ```bash
